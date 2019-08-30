@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Samara Dimensionality Heat Map</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				font-family: Monospace;
+				background-color: #000000;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#label {
+				color: #fff;
+				position: absolute;
+				top: 170px;
+				width: 52%;
+				text-align: center;
+				z-index: 100;
+				display:block;
+
+			}
+			
+			#textHolder1 {
+				color: #fff;
+				display: none;
+				position: absolute;
+				top: 305px;
+				font-size: 30px;
+				width: 20%;
+				left: 57.8%;
+				text-align: center;
+				z-index: 100;
+
+			}
+
+			#textHolder2 {
+				color: #fff;
+				display: none;
+				position: absolute;
+				top: 400px;
+				font-size: 30px;
+				width: 20%;
+				left: 77%;
+				text-align: center;
+				z-index: 100;
+
+			}
+			
+			#textHolder3 {
+				color: #fff;
+				display: none;
+				position: absolute;
+				top: 265px;
+				font-size: 30px;
+				width: 20%;
+				left: 57%;
+				text-align: center;
+				z-index: 100;
+
+			}
+
+			a { color: skyblue }
+			.button { background:#999; color:#eee; padding:0.2em 0.5em; cursor:pointer }
+			.highlight { background:orange; color:#fff; }
+
+			span {
+				display: inline-block;
+				width: 60px;
+				text-align: center;
+			}
+
+		</style>
+	</head>
+	<body>
+		<script src="js/three/three.js"></script>
+		<script src="js/Lut.js"></script>
+
+		<script src="js/loaders/STLLoader.js"></script>
+
+		<script src="js/WebGL.js"></script>
+		<script src="js/libs/stats.min.js"></script>
+
+		<script>
+
+			if ( WEBGL.isWebGLAvailable() === false ) {
+
+				document.body.appendChild( WEBGL.getWebGLErrorMessage() );
+
+			}
+
+			var container, stats;
+
+			var camera, cameraTarget, orthoCamera, scene, uiScene, renderer, mesh, lut;
+
+
+		//experiment with vortex ******************************
+			var TWO_PI = Math.PI * 2;
+			var HALF_PI = Math.PI / 2;
+			var QUARTER_PI = Math.PI / 4;
+
+			var vLayers = 24; // complex: 100 / Small: 12 // Norm: 24
+			var tailResolution = 90; // segments in tail for full circumference
+			var maxTailLength = 0.5; //complex: 0.25 /  small: 0.5 // Norm: 0.33
+			var tailSegments = Math.round(tailResolution * maxTailLength);
+			//var vMaxRadius = window.innerHeight/4;
+			var vMaxRadius = window.innerHeight/400;
+			//var vHeight = window.innerHeight/3; 
+			var vHeight = window.innerHeight/300; 
+			var yOffset = vHeight/1.4;
+			//var maxPlotRadius = 5; // complex: 2 / small: 10 
+			var maxPlotRadius = .01; // complex: 2 / small: 10 
+			var maxTailWeight = maxPlotRadius; // half plot diameter 
+			var linearRotationPerFrame = TWO_PI/600;
+
+			var maxAnimationLength = 20; // seconds
+			var animationProgress = 0;
+
+			var plotColor = 0xe1e1e1;
+			var plotOpacity = 1;
+
+			var tailColor = 0xe1e1e1;
+			var tailOpacity = 0.33;	
+			var trig = 0;
+			var vSpheregeometry = new THREE.SphereGeometry( maxPlotRadius, 20, 20 );
+			var vSphereMaterial = new THREE.MeshBasicMaterial({color: plotColor});
+			var vTailMaterial = new THREE.MeshBasicMaterial( {
+			    color: tailColor, 
+			    side: THREE.DoubleSide, 
+			    wireframe: false, 
+			    transparent: true, 
+			    opacity: tailOpacity});
+
+			var targetFrameRate = 60;
+
+			var vSpheres = [];
+			var vTails = [];
+			var initRotations = [];
+			var targetRotations = [];
+
+			init();
+			animate();
+
+			function createVSpheres() {
+			for ( var i = 0; i < vLayers; i++ ) {
+			    var sphereMesh = new THREE.Mesh( vSpheregeometry, vSphereMaterial );
+			    scene.add( sphereMesh );
+			    vSpheres[i] = sphereMesh;
+			    initRotations[i] = getRandom(0,1);
+			    targetRotations[i] = getRandom(0,1);
+			  }
+			}
+
+			function createVTails() {
+			  for ( var i = 0; i < vLayers; i++ ) {
+			    var vTailGeometry = new THREE.PlaneGeometry( 0,0,tailSegments,1 ); // arbitary w,h
+			    var tailMesh = new THREE.Mesh( vTailGeometry, vTailMaterial );
+			    scene.add( tailMesh );
+			    vTails[i] = tailMesh;
+			  }
+			}
+
+			function drawLayers() {
+
+			  for ( var l = 1; l <= vLayers; l++ ) {
+			    
+			    var layerAnimationTarget = targetRotations[l] * TWO_PI; // (value of property, like angle in radians) 
+			    var layerAnimationLength = maxAnimationLength; // (time) this could be randomised later
+			    var layerAnimationFrames = layerAnimationLength*targetFrameRate;
+			    var layerAnimationProgress = Math.min((animationProgress/layerAnimationFrames),1); 
+			    var layerAnimationProgressEased = easeInOutQuart(layerAnimationProgress);
+			    var layerAngleStart = initRotations[l] * TWO_PI + t*(linearRotationPerFrame*layerAnimationProgressEased);
+			    var layerAnimationNext = layerAngleStart + (layerAnimationProgressEased * layerAnimationTarget);
+			 
+			    tail(l, layerAnimationNext, layerAnimationProgressEased);
+			    plot(l, layerAnimationNext, layerAnimationProgressEased);
+			    
+			  }
+			  
+			}
+
+			var posX = 22;
+			var posY = 2000;
+			var posZ = -15;
+			function plot(layer, next, progress) {
+			  //Where our camera is looking: (0, - 0.25, 0)
+			  //samara location(2.1,  0.2, -1.5)
+			  var plotCenterX = posX;
+			  var plotCenterY = posY;
+			  var plotCenterZ = posZ;
+			  var layerScale = Math.tan((QUARTER_PI/vLayers)*layer);
+			  
+			  var layerRadius = vMaxRadius * layerScale;
+			  
+			  var nextX = plotCenterX+(layerRadius * Math.cos(next));
+			  nextX = nextX/10;
+			  var nextY = (yOffset + (vHeight/vLayers)*layer);  
+			  nextY = nextY/10;
+			  var nextZ = plotCenterZ+(layerRadius * Math.sin(next));
+			  nextZ = nextZ/10;
+			  
+			  var sphere = vSpheres[layer-1];
+			  var sphereScale = layerScale*progress;
+			  sphere.scale.set(sphereScale,sphereScale,sphereScale);
+			  sphere.position.set(nextX, nextY, nextZ);
+			  
+			  
+			}
+
+			function tail(layer, next, progress) {
+			  var plotCenterX = posX;
+			  var plotCenterY = posY;
+			  var plotCenterZ = posZ;
+			  var layerScale = Math.tan((QUARTER_PI/vLayers)*layer);
+			  var layerRadius = vMaxRadius * layerScale;
+			  
+			  var radianIncrement = (TWO_PI*progress)/tailResolution;  
+			  //var tailLength = maxTailLength*progress;  
+			    
+			  var tail = vTails[layer-1];
+			  var tailVertexPairs = tail.geometry.vertices.length/2;
+			  
+			  for (v=tailVertexPairs-1; v >= 0; v--) {    
+			    
+			    var pProximity = 1-(Math.max(1,v)/tailVertexPairs);
+			    var tailWeight = (progress*(maxTailWeight*layerScale))*pProximity;
+			    
+			    var nextAngle = next - (v * radianIncrement);
+			    var nextX = plotCenterX+(layerRadius * Math.cos(nextAngle));
+			    nextX = nextX/10;
+			    var nextY = (yOffset + (vHeight/vLayers)*layer) + tailWeight/2;  
+			    nextY = nextY/10;
+			    var nextZ = plotCenterZ+(layerRadius * Math.sin(nextAngle));
+			    nextZ = nextZ/10;
+			    
+
+			    tail.geometry.vertices[v].x =  nextX;
+			    tail.geometry.vertices[v].y =  nextY;
+			    tail.geometry.vertices[v].z =  nextZ;  
+			    
+			    var oppositeV = v+tailVertexPairs;
+			    tail.geometry.vertices[oppositeV].x =  nextX;
+			    tail.geometry.vertices[oppositeV].y =  nextY-tailWeight;
+			    tail.geometry.vertices[oppositeV].z =  nextZ;
+			     
+			    tail.geometry.verticesNeedUpdate = true;
+			    
+			    }
+			  }
+
+
+			var t=0;
+		
+
+			function easeInOutQuart(t) {
+			    t *= 2;
+			    if (t < 1) {
+			      return 0.5 * t * t * t * t;
+			    }
+			    t -= 2;
+			    return -0.5 * (t * t * t * t - 2);
+			}
+
+			// input, input low, input high, target low, target high 
+			function map_range(value, low1, high1, low2, high2) { 
+			    return low2 + (high2 - low2) * (value - low1) / (high1 - low1);
+			}
+
+			/* get random value frim range */
+			function getRandom(min, max) {
+			  return Math.random() * (max - min) + min;
+			}	
+		//END experiment with Vortex (main code, some will have to be in renderer/added to scene ***********
+			function init() {
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				camera = new THREE.PerspectiveCamera( 35, window.innerWidth / window.innerHeight, 1, 15 );
+				//camera.position.set( 3, 0.15, 3 );//need to adjust this for samara seed
+				camera.position.set(3.9046985161381933, 0.10, -2.432531058736887 );
+				
+				orthoCamera = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 1, 2 );
+				orthoCamera.position.set( 0.5, 0, 1 );
+
+				cameraTarget = new THREE.Vector3( 0, - 0.25, 0 );
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0x72645b );
+				scene.fog = new THREE.Fog( 0x72645b, 2, 15 );
+
+				uiScene = new THREE.Scene(); 
+				
+				lut = new THREE.Lut();
+				
+				//develop sprite for on screen UI
+				sprite = new THREE.Sprite( new THREE.SpriteMaterial( {
+					map: new THREE.CanvasTexture( lut.createCanvas() )
+				} ) );
+				sprite.scale.x = 0.125;
+				uiScene.add( sprite );
+				
+				//create array of colors for custom colormap
+				var green = [0.0, 0x41f47c];
+				var blue = [0.2, 0x41ebf4];
+				var dBlue = [0.5, 0x41a3f4];
+				var purple = [0.8, 0xb642f4];
+				var pink = [1.0, 0xef3bec];
+			
+				//array of colors for lookup table	
+				var colorArray = [green, blue, dBlue, purple, pink]; 
+
+				params	= {
+					colorMap: 'customMap',
+					defaultMap: 'rainbow',
+					arrayOfColors: colorArray
+				};
+
+				lut.addColorMap(params.colorMap, params.arrayOfColors);
+
+				var legendParams = {
+					title: 'Samara Normalized Vector Display:',
+					um: 'Angle of Normal',
+					ticks: 10,	
+				};
+				lut.setLegendLabels = legendParams;		
+
+				
+				// Ground
+
+				var plane = new THREE.Mesh(
+					new THREE.PlaneBufferGeometry( 40, 40 ),
+					new THREE.MeshPhongMaterial( { color: 0x999999, specular: 0x101010 } )
+				);
+				plane.rotation.x = - Math.PI / 2;
+				plane.position.y = - 0.5;
+				scene.add( plane );
+
+				plane.receiveShadow = true;
+
+
+				// ASCII file
+
+				var loader = new THREE.STLLoader();
+				loader.load( './models/stl/MapleSeedSTL.stl', function ( geometry ) {
+
+					//var material = new THREE.MeshPhongMaterial( { color: 0xff5533, specular: 0x111111, shininess: 200 } );
+					var material = new THREE.MeshNormalMaterial();
+					mesh = new THREE.Mesh( geometry, material );
+
+					mesh.position.set( 2.1,  0.2, -1.5 );
+					mesh.scale.set( 0.01, 0.01, 0.01 );
+					mesh.rotation.set( 0, - Math.PI / 4, 0 );
+
+					mesh.castShadow = true;
+					mesh.receiveShadow = true;
+					scene.add( mesh );
+				} );
+
+
+				//************* CONTINUE VORTEX EXPERIMENT ******
+				//************* END VORTEX EXPERIMENT ******
+
+
+				// Lights
+
+				scene.add( new THREE.HemisphereLight( 0x443333, 0x111122 ) );
+
+				addShadowedLight( 1, 1, 1, 0xffffff, 1.35 );
+				addShadowedLight( 0.5, 1, - 1, 0xffaa00, 1 );
+				// renderer
+
+				renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
+				renderer.autoClear = false;
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				renderer.gammaInput = true;
+				renderer.gammaOutput = true;
+
+				renderer.shadowMap.enabled = true;
+
+				container.appendChild( renderer.domElement );
+
+				// stats
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				//
+
+				window.addEventListener( 'resize', onWindowResize, false );
+				if(mesh){
+					updateColors();
+				}
+
+			}
+
+			function addShadowedLight( x, y, z, color, intensity ) {
+
+				var directionalLight = new THREE.DirectionalLight( color, intensity );
+				directionalLight.position.set( x, y, z );
+				scene.add( directionalLight );
+
+				directionalLight.castShadow = true;
+
+				var d = 1;
+				directionalLight.shadow.camera.left = - d;
+				directionalLight.shadow.camera.right = d;
+				directionalLight.shadow.camera.top = d;
+				directionalLight.shadow.camera.bottom = - d;
+
+				directionalLight.shadow.camera.near = 1;
+				directionalLight.shadow.camera.far = 4;
+
+				directionalLight.shadow.mapSize.width = 1024;
+				directionalLight.shadow.mapSize.height = 1024;
+
+				directionalLight.shadow.bias = - 0.002;
+
+			}
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				render();
+				stats.update();
+
+			}
+			//create our lines to draw on the screen for procedural animation as well
+			//keep track of elapsed time to stall rotation
+			var first, ellapsed, line1, line2, line3, line4, L1C, L2C, L3C, txt1T, txt2T, txt3T;
+			var lineMat = new THREE.LineBasicMaterial( { color: 0x0000ff, linewidth: 3} );
+			L1C = 0; //keep track if we have drawn line segs
+			L2C = 0; 
+			L3C = 0; 
+			txt1T = 0; //keep track if words have reached top of page
+			txt2T = 0; //keep track if words have reached top of page
+			txt3T = 0; //keep track if words have reached top of page
+		
+			//parameters to control drawing of bounding box
+			var LX = .620;
+			var RX = 1.085;
+			var BT = -.1;
+			var TP = .15;
+			var dX = .01;
+			var dXT = dX/5; //option to vary drawing speed of top crossbar
+			var MD = (LX+RX)/2;
+			var MD2 = (TP+BT)/2;
+			var morphCount = 0; //keep track of which text we are currently morphing in procedural animation
+
+			//create first line
+			var lineGeom1 = new THREE.Geometry();
+			//lineGeom1.vertices.push(new THREE.Vector3(LX,  TP, 0 ) ); //animate this one from -.1 to val 
+			lineGeom1.vertices.push(new THREE.Vector3(LX,  BT, 0 ) ); //animate this one from -.1 to val 
+			lineGeom1.vertices.push(new THREE.Vector3(LX, BT, 0 ) );
+			line1 = new THREE.Line( lineGeom1, lineMat );
+			//create second line
+			var lineGeom2 = new THREE.Geometry();
+			//lineGeom2.vertices.push(new THREE.Vector3(RX,  TP, 0 ) ); //animate this one from -.1 to val 
+			lineGeom2.vertices.push(new THREE.Vector3(RX,  BT, 0 ) ); //animate this one from -.1 to val 
+			lineGeom2.vertices.push(new THREE.Vector3(RX, BT, 0 ) );
+			line2 = new THREE.Line( lineGeom2, lineMat );
+			var lineGeom3 = new THREE.Geometry();
+			//lineGeom3.vertices.push(new THREE.Vector3(LX,  TP, 0 ) ); //animate this one from -.1 to val 
+			lineGeom3.vertices.push(new THREE.Vector3(LX,  TP, 0 ) ); //animate this one from -.1 to val 
+			lineGeom3.vertices.push(new THREE.Vector3(LX, TP, 0 ) );
+			line3 = new THREE.Line( lineGeom3, lineMat );
+			var lineGeom4 = new THREE.Geometry();
+			//lineGeom4.vertices.push(new THREE.Vector3(RX,  TP, 0 ) ); //animate this one from -.1 to val 
+			lineGeom4.vertices.push(new THREE.Vector3(RX,  TP, 0 ) ); //animate this one from -.1 to val 
+			lineGeom4.vertices.push(new THREE.Vector3(RX, TP, 0 ) );
+			line4 = new THREE.Line( lineGeom4, lineMat );
+
+			var angle = 0.01;
+			var xRotAngle = 0;
+			var yRotAngle = - Math.PI/4;
+			var zRotAngle = 0;
+			//var ringGeom = new THREE.RingGeometry( 0.3, .301, 100, 2, 1, angle );	
+			var ringGeom = new THREE.RingGeometry( 0.3, .301, 100, 2, 1, 6.28 );	
+			var ringMat = new THREE.MeshBasicMaterial( { color: 0x0000ff, side: THREE.DoubleSide } ); 
+			var rMesh = new THREE.Mesh( ringGeom, ringMat );
+			rMesh.position.set( .85, -0.06 ,0);
+
+			function render() {
+
+				//continue vortex experiment ***********
+				if(trig == 1){
+					animationProgress++;
+					drawLayers();
+					t++;
+				}
+				//end vortex experiment ***********
+
+				var timer = Date.now() * 0.0005;
+				if(!first){
+					first = timer;
+				}
+
+				ellapsed = timer - first;
+				if(mesh){
+					updateColors();
+					if(- ((Math.PI / 4 )* ellapsed * 2) > -10){
+						mesh.rotation.set( 0, - ((Math.PI / 4 )* ellapsed * 2) , 0 );
+						yRotAngle =  mesh.rotation.y;
+					}else if((mesh.position.y > 0.01) && L1C < 1){
+						mesh.position.y = mesh.position.y - 0.005;
+					}else if(L1C < 2){
+						drawSegment(1);	
+					}else if(L2C < 3){
+						drawSegment(2);	
+					}
+				}
+
+				camera.lookAt( cameraTarget );
+
+				renderer.render( scene, camera );
+				renderer.render( uiScene, orthoCamera );
+
+			}
+
+			function updateColors() {
+				lut.setColorMap( params.colorMap );
+				lut.setMax( 2000 );
+				lut.setMin( 0 );
+				var map = sprite.material.map;
+				lut.updateCanvas( map.image );
+				map.needsUpdate = true;
+			}
+
+			function drawSegment(lineNum){
+				if(lineNum == 1){
+					if(L1C == 0){
+						uiScene.add(line1);
+						uiScene.add(line2);
+						L1C = 1;
+					}else{
+						//increment top vertices.y value 
+						if(line1.geometry.vertices[0].y < TP){
+							line1.geometry.vertices[0].y = line1.geometry.vertices[0].y + dX;
+							line1.geometry.verticesNeedUpdate = true;
+							line2.geometry.vertices[0].y = line2.geometry.vertices[0].y + dX;
+							line2.geometry.verticesNeedUpdate = true;
+						}else{
+							L1C = 2;	
+						}
+					}
+				}else if(lineNum == 2){
+					if(L2C == 0){
+						uiScene.add(line3);
+						uiScene.add(line4);
+						L2C = 1;
+					}else{
+						//increment top vertices.y value 
+						if((line3.geometry.vertices[0].x < MD || line4.geometry.vertices[0].x > MD) && L2C == 1){
+							line3.geometry.vertices[0].x = line3.geometry.vertices[0].x + dXT;
+							line3.geometry.verticesNeedUpdate = true;
+							line4.geometry.vertices[0].x = line4.geometry.vertices[0].x - dXT;
+							line4.geometry.verticesNeedUpdate = true;
+							document.getElementById('textHolder1').style.display = 'block';
+							if(morphCount == 0){
+								updateMorphText(0);
+								morphCount = 1;
+							}
+						}else if(L2C < 2){
+							L2C = 2;
+							line1.visible = false;
+							line2.visible = false;
+							line3.visible = false;
+							line4.visible = false;
+							//uiScene.remove(line1);
+							//uiScene.remove(line2);
+							//uiScene.remove(line3);
+							//uiScene.remove(line4);
+						}else if(txt1T < 1){
+							var txt1 = document.getElementById('textHolder1');
+							txt1.classList.remove('data-morph');	
+							if(txt1.offsetLeft < (window.innerWidth - txt1.offsetWidth)){
+								txt1.style.left = (txt1.offsetLeft + 3) + 'px';	
+							}
+							if(txt1.offsetTop > 10){
+								txt1.style.top = (txt1.offsetTop - 2) + 'px';	
+							}else{
+								txt1T = 1;
+							}
+						}else if(L3C < 1){
+							morphCount = 0;
+							//redraw 1st line
+							BT = BT - .1;
+							MD2 = (TP+BT)/2; 
+							line1.geometry.vertices[0].x = RX-.1;
+							line1.geometry.vertices[0].y = TP-.01;
+							line1.geometry.vertices[1].x = RX-.1;
+							line1.geometry.vertices[1].y = TP-.01;
+							line1.geometry.verticesNeedUpdate = true;
+							
+							//redraw 2nd line
+							line2.geometry.vertices[0].x = RX-.1;
+							line2.geometry.vertices[0].y = BT;
+							line2.geometry.vertices[1].x = RX-.1;
+							line2.geometry.vertices[1].y = BT;
+							line2.geometry.verticesNeedUpdate = true;
+							
+							//redraw 3rd line
+							line3.geometry.vertices[0].x = RX;
+							line3.geometry.vertices[0].y = TP-.01;
+							line3.geometry.vertices[1].x = RX; //will transform this point to (RX, MD2)
+							line3.geometry.vertices[1].y = TP-.01;
+							line3.geometry.verticesNeedUpdate = true;
+							
+							//redraw 4th line
+							line4.geometry.vertices[0].x = RX;
+							line4.geometry.vertices[0].y = BT;
+							line4.geometry.vertices[1].x = RX; //will transform this point to (RX, MD2)
+							line4.geometry.vertices[1].y = BT;
+							line4.geometry.verticesNeedUpdate = true;
+							L3C = 1;
+						}else if(L3C < 2){
+							line1.visible = true;
+							line2.visible = true;
+							//second time through, animate our lines for length param
+							if(line1.geometry.vertices[0].x < RX){
+								line1.geometry.vertices[0].x = line1.geometry.vertices[0].x + dXT;
+								line1.geometry.verticesNeedUpdate = true;
+
+								line2.geometry.vertices[0].x = line2.geometry.vertices[0].x + dXT;
+								line2.geometry.verticesNeedUpdate = true;
+							}else{
+								L3C = 2;	
+							}
+						}else if(L3C < 3){
+							line3.visible = true;
+							line4.visible = true;
+							var txt2 = document.getElementById('textHolder2');
+							txt2.classList.add('data-morph');	
+							txt2.style.display = 'block';
+							if(morphCount == 0){
+								updateMorphText(1);
+								morphCount = 1;
+							}
+							if((line3.geometry.vertices[0].y > MD2) && (line4.geometry.vertices[0].y < MD2)){
+								line3.geometry.vertices[0].y = line3.geometry.vertices[0].y - dX;
+								line3.geometry.verticesNeedUpdate = true;
+
+								line4.geometry.vertices[0].y = line4.geometry.vertices[0].y + dX;
+								line4.geometry.verticesNeedUpdate = true;
+							}else{
+								setTimeout(() =>{L3C = 3},1500);	
+							}
+						}else if(L3C < 4){
+							var txt1 = document.getElementById('textHolder1');
+							var txt2 = document.getElementById('textHolder2');
+							txt2.classList.remove('data-morph');	
+							if(txt2.offsetLeft < (window.innerWidth - txt2.offsetWidth)){
+								txt2.style.left = (txt2.offsetLeft + 1) + 'px';	
+							}
+							if(txt2.offsetTop > txt1.offsetHeight + 10){
+								txt2.style.top = (txt2.offsetTop - 2) + 'px';	
+							}else{
+								L3C = 4;
+							}
+						}else if(L3C < 5){
+							morphCount = 0;
+							line1.visible = false;	
+							line2.visible = false;	
+							line3.visible = false;	
+							line4.visible = false;	
+							setTimeout(()=>{L3C = 5},1000);
+						}else if(L3C < 6){
+							uiScene.add(rMesh);
+							if(angle < 6.3){
+								angle = angle + 0.1;
+								rMesh.geometry = new THREE.RingGeometry( 0.3, .302, 100, 2, 2, angle);	
+								rMesh.geometry.verticesNeedUpdate = true;	
+								rMesh.geometry.elementsNeedUpdate = true;	
+								var txt3 = document.getElementById('textHolder3');
+								txt3.classList.add('data-morph');	
+								txt3.style.display = 'block';
+								if(morphCount == 0){
+									updateMorphText(2);
+									morphCount = 1;
+								}
+							}else{
+								setTimeout(()=>{L3C = 6;},1000);
+							}
+						}else if(L3C < 7){
+							var txt1 = document.getElementById('textHolder2');
+							var txt2 = document.getElementById('textHolder2');
+							var txt3 = document.getElementById('textHolder3');
+							txt3.classList.remove('data-morph');	
+							if(txt3.offsetTop > txt1.offsetHeight + txt2.offsetHeight + 10){
+								txt3.style.top = (txt3.offsetTop - 2) + 'px';	
+							}						
+							if(txt3.offsetLeft < (window.innerWidth - txt3.offsetWidth)){
+								txt3.style.left = (txt3.offsetLeft + 2) + 'px';	
+							}else{
+								setTimeout(()=>{L3C = 7},1000);
+							}
+						}else if(L3C < 8){
+							if(trig == 0){
+								createVTails();
+								createVSpheres();
+								trig = 1;
+							}
+							rMesh.visible = false;
+							uiScene.remove(sprite);
+							document.getElementById('label').style.display = 'none';
+							if(mesh.position.x > 1.8){
+								mesh.position.x = mesh.position.x - 0.01;
+							}
+							if(mesh.position.z < -0.8){
+								mesh.position.z = mesh.position.z + 0.01;
+							}						
+							if(mesh.position.y < .19){
+								mesh.position.y = mesh.position.y + 0.01;
+							}else{
+								setTimeout(()=>{L3C = 8},500);	
+							}
+						}else if(L3C < 9){
+							//need to increment slower transformation, get weighted end down slightly more and then rotate
+							if(xRotAngle < 1){
+								xRotAngle = xRotAngle + .01;
+							}
+							if(yRotAngle < -8.9){
+								yRotAngle = yRotAngle + .01;
+							}
+							//if(mesh.geometry.y <)
+							//console.log(mesh.position.y);
+							//mesh.rotation.set( 1, -3, 0 );
+							mesh.rotation.set( xRotAngle, yRotAngle, 0 );
+						}
+					}
+				
+				}
+			}
+	
+			//morphing text experiment
+			/**
+			 * morpher() morph a text to another
+			 * It loops over chars to morph the text
+			 *
+			 * @param {Element} element
+			 * @param {String} start
+			 * @param {String} end
+			 */
+			const morpher = (element, start, end) => {
+			  /**
+			   * Write parameters
+			   *
+			   * [1] : chars is an array of characters you choose to randomly morph the text between start and end
+			   * [2] : duration is the duration of the global morph
+			   * [3] : frameRate is the speed of the morph for each letter
+			   */
+			  const chars     = ['a','b','c','d','e','f','g','0','1','2','3','4','5','6','7','8','9','%','$','?','!']; /*[1]*/
+			  const duration  = 1.7;  /*[2]*/
+			  const frameRate = 25; /*[3]*/
+
+			  /**
+			   * Write text variables
+			   */
+			  const string = start.split('');
+			  const result = end.split('');
+			  const slen   = string.length;
+			  const rlen   = result.length;
+
+			  /**
+			   * Write time variables
+			   */
+			  let present   = new Date();
+			  let past      = present.getTime();
+			  let count     = 0;
+			  let spentTime = 0;
+			  // SplitTime  = milliseconds / letters
+			  let splitTime = (duration * 1000) / Math.max(slen, rlen);
+
+			  const update = () => {
+			    // Update present date and spent time
+			    present    = new Date();
+			    spentTime += present.getTime() - past;
+
+			    // Random letters
+			    for (let i = count; i < Math.max(slen, rlen); i++) {
+			      const random = Math.floor(Math.random() * (chars.length - 1));
+			      // Change letter
+			      string[i] = chars[random];
+			    }
+
+			    // Morph letters from start to end
+			    if (spentTime >= splitTime) {
+			      // Update count of letters to morph
+			      count += Math.floor(spentTime / splitTime);
+			      // Morphing
+			      for (let j = 0; j < count; j++) {
+				string[j] = result[j] || null;
+			      }
+			      // Reset spent time
+			      spentTime = 0;
+			    }
+
+			    // Update DOM
+			    element.textContent = string.join('');
+
+			    // Save present date
+			    past = present.getTime();
+
+			    // Loop
+			    if (count < Math.max(slen, rlen)) {
+			      // Only use a setTimeout if the frameRate is lower than 60FPS
+			      // Remove the setTimeout if the frameRate is equal to 60FPS
+			      setTimeout(() => {
+				window.requestAnimationFrame(update);
+			      }, 500 / frameRate);
+			    }
+			  };
+
+			  // Start loop
+			  update();
+			}
+
+
+			function updateMorphText(counter){
+				    const morph  = document.querySelector('.data-morph');
+				    const button = document.querySelector('.js-morph-trigger');
+				    var words = ['Width: 3cm','Length: 2cm','Mass: 170 mg']; 
+				    const start = morph.innerHTML;
+				    //const start = words[0];
+				    const end   = words[counter];
+				    morpher(morph, start, end);
+			}
+
+
+
+		</script>
+		<div id="label">Angle of Normalized Vector Projections</div>
+		<div id="textHolder1" class="data-morph">**********</div>
+		<div id="textHolder2">**********</div>
+		<div id="textHolder3">***********</div>
+	</body>
+</html>
