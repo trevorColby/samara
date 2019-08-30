@@ -11,6 +11,30 @@
 				margin: 0px;
 				overflow: hidden;
 			}
+			#loader {
+				position: absolute;
+				left: 0;
+				top: 0;
+				background-color: #000000;
+				width: 100vw;
+				height: 100vh;
+				z-index: 101;
+				visibility: visible;
+			}
+
+			@keyframes fade {
+				0%{
+					opacity: 1;
+				}
+
+				100% {
+					opacity: 0;
+				}
+			}
+			
+			.fadeOut {
+				animation: fade 2s forwards;
+			}
 
 			#label {
 				color: #fff;
@@ -356,6 +380,7 @@
 					mesh.castShadow = true;
 					mesh.receiveShadow = true;
 					scene.add( mesh );
+					document.getElementById('loader').classList.add('fadeOut');
 				} );
 
 
@@ -842,6 +867,7 @@
 
 
 		</script>
+		<div id="loader"></div>
 		<div id="label">Angle of Normalized Vector Projections</div>
 		<div id="textHolder1" class="data-morph">**********</div>
 		<div id="textHolder2">**********</div>
